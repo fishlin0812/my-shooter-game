@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>2D 上帝視角槍戰遊戲</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100%; overflow: hidden;
+      background: white;
+      color: black;
+      font-family: Arial, sans-serif;
+      user-select: none;
+    }
+    #gameCanvas {
+      display: block;
+      background: white;
+      cursor: crosshair;
+    }
+    #playerHpBoard {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 24px;
+      font-weight: bold;
+      user-select: none;
+      z-index: 10;
+      color: green;
+      display: none;
+    }
+    #startScreen {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #222;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-size: 28px;
+      user-select: none;
+      z-index: 20;
+      color: white;
+    }
+    #startScreen button {
+      margin-top: 20px;
+      padding: 10px 30px;
+      font-size: 24px;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      background-color: #ff4444;
+      color: white;
+      transition: background-color 0.3s;
+    }
+    #startScreen button:hover {
+      background-color: #cc3333;
+    }
+    #restartButton {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 15px 40px;
+      font-size: 28px;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      background-color: #44aa44;
+      color: white;
+      transition: background-color 0.3s;
+      z-index: 30;
+      display: none;
+    }
+    #restartButton:hover {
+      background-color: #339933;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="startScreen">
+    <div>由 Fishlin0812 製作</div>
+    <button id="startBtn">開始遊戲</button>
+  </div>
+
+  <div id="playerHpBoard">玩家血量: 100</div>
+  <button id="restartButton">重新開始</button>
+  <canvas id="gameCanvas"></canvas>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const playerHpBoard = document.getElementById('playerHpBoard');
+  const startScreen = document.getElementById('startScreen');
+  const startBtn = document.getElementById('startBtn');
+  const restartButton = document.getElementById('restartButton');
+
+  // 基本設定
+  const bulletSpeed = 20; // 子彈速度
+  const playerRadius = 20;
+  const enemyRadius = 20;
+  const gunWidth = 25;
+  const gunHeight = 8;
+  const bulletRadius = 6;
+  const shootInterval = 100; // 毫秒
+
+  // 玩家物件
+  const player = {
+    x: 0,
+    y: 0,
+    radius: playerRadius,
+    speed: 5,
+    dx: 0,
+    dy: 0,
+    hp: 100,
+    color: 'cyan',
+    gunAngle: 0,  // 槍械角度
+  };
+
+  // 多個敵人 (3個)
+  const enemies = [];
+  const maxEnemies = 3;
+
+  // 玩家與敵人的子彈
+  let playerBullets = [];
+  let enemyBullets = [];
+
+  // 多面牆壁 (地圖障礙物)
+  const walls = [];
+
+  // 射擊與控制狀態
+  let keysPressed = {};
+  let mousePos = {x: 0, y: 0};
+  let shooting = false;
+  let lastShotTime = 0;
+  let gameRunning = false;
+
+  // 調整畫布大小，並生成地圖牆壁
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    generateWalls();
+  }
+  window.addEventListener('resize', resize);
+
+  // 生成有趣地圖障礙物 (隨機數量，縮小尺寸)
+  function generateWalls() {
+    walls.length = 0; // 清空
+    const wallCount = 7; // 增加障礙物數量
+
+    for(let i=0; i<wallCount; i++) {
+      const w = 100 + Math.random()*50;  // 100~150寬度
+      const h = 20 + Math.random()*30;   // 20~50高度
+      const x = Math.random() * (canvas.width - w);
+      const y = Math.random() * (canvas.height - h);
+      walls.push({x, y, width: w, height: h, color:'#555'});
+    }
+  }
+
+  // 繪製牆壁
+  function drawWalls() {
+    walls.forEach(wall => {
+      ctx.fillStyle = wall.color;
+      ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+    });
+  }
+
+  // 繪製圓形角色
+  function drawCircle(obj) {
+    ctx.beginPath();
+    ctx.fillStyle = obj.color;
+    ctx.arc(obj.x, obj.y, obj.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 繪製血條 (綠色)
+  function drawHpBar(obj) {
+    const barWidth = obj.radius * 2;
+    const barHeight = 6;
+    ctx.fillStyle = 'black';
+    ctx.fillRect(obj.x - obj.radius, obj.y - obj.radius - 12, barWidth, barHeight);
+    ctx.fillStyle = 'limegreen';
+    ctx.fillRect(obj.x - obj.radius, obj.y - obj.radius - 12, barWidth * (obj.hp / 100), barHeight);
+  }
+
+  // 繪製槍械（長方形並旋轉）
+  // x,y 是槍械中心點，angle是弧度
+  // color 是槍械顏色
+  function drawGun(x, y, angle, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, -gunHeight/2, gunWidth, gunHeight);
+    ctx.restore();
+  }
+
+  // 繪製玩家
+  function drawPlayer() {
+    drawCircle(player);
+    drawHpBar(player);
+
+    // 槍械定位在玩家右邊邊緣中心，並且朝向 mousePos 角度
+    const gunX = player.x + player.radius * Math.cos(player.gunAngle);
+    const gunY = player.y + player.radius * Math.sin(player.gunAngle);
+    drawGun(gunX, gunY, player.gunAngle, '#0066cc');
+  }
+
+  // 繪製敵人
+  function drawEnemy(enemy) {
+    if (!enemy.alive) return;
+    drawCircle(enemy);
+    drawHpBar(enemy);
+
+    // 槍械定位在敵人右邊，朝向玩家
+    const gunX = enemy.x + enemy.radius * Math.cos(enemy.gunAngle);
+    const gunY = enemy.y + enemy.radius * Math.sin(enemy.gunAngle);
+    drawGun(gunX, gunY, enemy.gunAngle, '#cc0000');
+  }
+
+  // 繪製子彈(圓形)
+  function drawBullets() {
+    ctx.fillStyle = 'yellow';
+    playerBullets.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, bulletRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.fillStyle = 'orange';
+    enemyBullets.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, bulletRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // 碰撞判斷: 子彈與牆壁 (圓形 vs 矩形)
+  function bulletHitsWall(bullet) {
+    const r = bulletRadius;
+    return walls.some(wall => {
+      const closestX = Math.max(wall.x, Math.min(bullet.x, wall.x + wall.width));
+      const closestY = Math.max(wall.y, Math.min(bullet.y, wall.y + wall.height));
+      const dx = bullet.x - closestX;
+      const dy = bullet.y - closestY;
+      return (dx*dx + dy*dy) < (r*r);
+    });
+  }
+
+  // 碰撞判斷: 圓形 vs 矩形 (玩家/敵人 vs 牆)
+  function circleRectCollision(circle, rect) {
+    const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+    const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+    const dx = circle.x - closestX;
+    const dy = circle.y - closestY;
+    return (dx*dx + dy*dy) < (circle.radius * circle.radius);
+  }
+
+  // 更新玩家位置並處理牆壁碰撞阻擋
+  function updatePlayer() {
+    let newX = player.x + player.dx;
+    let newY = player.y + player.dy;
+
+    // 邊界限制
+    newX = Math.min(Math.max(newX, player.radius), canvas.width - player.radius);
+    newY = Math.min(Math.max(newY, player.radius), canvas.height - player.radius);
+
+    const testCircle = {x: newX, y: newY, radius: player.radius};
+
+    if (!walls.some(wall => circleRectCollision(testCircle, wall))) {
+      player.x = newX;
+      player.y = newY;
+    } else {
+      // 分別嘗試X與Y方向移動
+      const testXOnly = {x: newX, y: player.y, radius: player.radius};
+      if (!walls.some(wall => circleRectCollision(testXOnly, wall))) {
+        player.x = newX;
+      }
+      const testYOnly = {x: player.x, y: newY, radius: player.radius};
+      if (!walls.some(wall => circleRectCollision(testYOnly, wall))) {
+        player.y = newY;
+      }
+    }
+  }
+
+  // 更新敵人位置及牆壁反彈
+  function updateEnemy(enemy) {
+    if (!enemy.alive) return;
+
+    enemy.x += enemy.speedX;
+    enemy.y += enemy.speedY;
+
+    // 邊界反彈
+    if (enemy.x <= enemy.radius) {
+      enemy.x = enemy.radius;
+      enemy.speedX = -enemy.speedX;
+    } else if (enemy.x >= canvas.width - enemy.radius) {
+      enemy.x = canvas.width - enemy.radius;
+      enemy.speedX = -enemy.speedX;
+    }
+    if (enemy.y <= enemy.radius) {
+      enemy.y = enemy.radius;
+      enemy.speedY = -enemy.speedY;
+    } else if (enemy.y >= canvas.height - enemy.radius) {
+      enemy.y = canvas.height - enemy.radius;
+      enemy.speedY = -enemy.speedY;
+    }
+
+    // 牆壁反彈
+    if (walls.some(wall => circleRectCollision(enemy, wall))) {
+      enemy.speedX = -enemy.speedX;
+      enemy.speedY = -enemy.speedY;
+      enemy.x += enemy.speedX * 2;
+      enemy.y += enemy.speedY * 2;
+    }
+  }
+
+  // 更新玩家子彈位置與碰撞
+  function updatePlayerBullets() {
+    playerBullets.forEach((b, i) => {
+      b.x += b.vx;
+      b.y += b.vy;
+
+      if (bulletHitsWall(b)) {
+        playerBullets.splice(i, 1);
+        return;
+      }
+      if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+        playerBullets.splice(i, 1);
+        return;
+      }
+      for (const enemy of enemies) {
+        if (!enemy.alive) continue;
+        const distX = b.x - enemy.x;
+        const distY = b.y - enemy.y;
+        if (distX * distX + distY * distY < (enemy.radius + bulletRadius) * (enemy.radius + bulletRadius)) {
+          enemy.hp -= 10;
+          playerBullets.splice(i, 1);
+          if (enemy.hp <= 0) {
+            enemy.alive = false;
+            // 檢查是否全部敵人死亡
+            if (enemies.every(e => !e.alive)) {
+              endGame(true); // 勝利
+            }
+          }
+          break;
+        }
+      }
+    });
+  }
+
+  // 更新敵人子彈位置與碰撞
+  function updateEnemyBullets() {
+    enemyBullets.forEach((b, i) => {
+      b.x += b.vx;
+      b.y += b.vy;
+
+      if (bulletHitsWall(b)) {
+        enemyBullets.splice(i, 1);
+        return;
+      }
+      if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+        enemyBullets.splice(i, 1);
+        return;
+      }
+      const distX = b.x - player.x;
+      const distY = b.y - player.y;
+      if (distX * distX + distY * distY < (player.radius + bulletRadius) * (player.radius + bulletRadius)) {
+        player.hp -= 10;
+        playerHpBoard.textContent = `玩家血量: ${player.hp}`;
+        enemyBullets.splice(i, 1);
+        if (player.hp <= 0) {
+          endGame(false);
+        }
+      }
+    });
+  }
+
+  // 敵人射擊 (冷卻)
+  function enemyAttack(enemy) {
+    if (!enemy.alive) return;
+    if (enemy.bulletCooldown > 0) {
+      enemy.bulletCooldown--;
+      return;
+    }
+    if (enemyBullets.length < maxEnemies) {  // 最多三發敵人子彈同時存在
+      // 槍械位置
+      const gunX = enemy.x + enemy.radius * Math.cos(enemy.gunAngle);
+      const gunY = enemy.y + enemy.radius * Math.sin(enemy.gunAngle);
+
+      let dx = player.x - gunX;
+      let dy = player.y - gunY;
+      const length = Math.sqrt(dx*dx + dy*dy);
+      if (length === 0) return;
+      dx /= length;
+      dy /= length;
+
+      enemyBullets.push({
+        x: gunX,
+        y: gunY,
+        vx: dx * bulletSpeed,
+        vy: dy * bulletSpeed
+      });
+
+      enemy.bulletCooldown = 6; // 0.1秒冷卻 (60fps)
+    }
+  }
+
+  // 玩家射擊
+  function shootPlayerBullet() {
+    const gunX = player.x + player.radius * Math.cos(player.gunAngle);
+    const gunY = player.y + player.radius * Math.sin(player.gunAngle);
+
+    let dx = mousePos.x - gunX;
+    let dy = mousePos.y - gunY;
+    const length = Math.sqrt(dx*dx + dy*dy);
+    if (length === 0) return;
+    dx /= length;
+    dy /= length;
+
+    playerBullets.push({
+      x: gunX,
+      y: gunY,
+      vx: dx * bulletSpeed,
+      vy: dy * bulletSpeed
+    });
+  }
+
+  // 更新所有敵人狀態 (移動、射擊、槍械角度)
+  function updateEnemies() {
+    enemies.forEach(enemy => {
+      if (!enemy.alive) return;
+
+      updateEnemy(enemy);
+
+      // 槍械朝向玩家角度
+      let angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+      enemy.gunAngle = angle;
+
+      enemyAttack(enemy);
+    });
+  }
+
+  // 主繪製函式
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawWalls();
+    drawPlayer();
+    drawBullets();
+    enemies.forEach(drawEnemy);
+  }
+
+  // 遊戲主迴圈
+  function gameLoop() {
+    if (!gameRunning) return;
+
+    updatePlayer();
+    updateEnemies();
+    updatePlayerBullets();
+    updateEnemyBullets();
+
+    // 玩家槍械朝滑鼠方向
+    player.gunAngle = Math.atan2(mousePos.y - player.y, mousePos.x - player.x);
+
+    draw();
+
+    if (shooting) {
+      const now = Date.now();
+      if (now - lastShotTime > shootInterval) {
+        shootPlayerBullet();
+        lastShotTime = now;
+      }
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // 鍵盤事件
+  window.addEventListener('keydown', e => {
+    if (!gameRunning) return;
+    keysPressed[e.key.toLowerCase()] = true;
+    updateMovement();
+  });
+  window.addEventListener('keyup', e => {
+    if (!gameRunning) return;
+    keysPressed[e.key.toLowerCase()] = false;
+    updateMovement();
+  });
+  function updateMovement() {
+    player.dx = 0;
+    player.dy = 0;
+    if (keysPressed['w']) player.dy = -player.speed;
+    if (keysPressed['s']) player.dy = player.speed;
+    if (keysPressed['a']) player.dx = -player.speed;
+    if (keysPressed['d']) player.dx = player.speed;
+
+    // 斜角速度修正 (約0.707倍)
+    if (player.dx !== 0 && player.dy !== 0) {
+      player.dx *= Math.SQRT1_2;
+      player.dy *= Math.SQRT1_2;
+    }
+  }
+
+  // 滑鼠位置更新
+  window.addEventListener('mousemove', e => {
+    mousePos.x = e.clientX;
+    mousePos.y = e.clientY;
+  });
+
+  // 滑鼠按住射擊
+  window.addEventListener('mousedown', e => {
+    if (!gameRunning) return;
+    if (e.button === 0) {
+      shooting = true;
+    }
+  });
+  window.addEventListener('mouseup', e => {
+    if (!gameRunning) return;
+    if (e.button === 0) {
+      shooting = false;
+    }
+  });
+
+  // 遊戲結束處理
+  function endGame(victory) {
+    gameRunning = false;
+    restartButton.style.display = 'block';
+    playerHpBoard.style.display = 'none';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 顯示結束訊息
+    ctx.fillStyle = victory ? 'green' : 'red';
+    ctx.font = '48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(victory ? '你贏了!' : '遊戲結束', canvas.width/2, canvas.height/2);
+  }
+
+  // 重新開始按鈕
+  restartButton.addEventListener('click', () => {
+    location.reload();
+  });
+
+  // 產生敵人(重置所有敵人)
+  function spawnEnemies() {
+    enemies.length = 0;
+    for(let i=0; i<maxEnemies; i++) {
+      let enemy = {
+        x: canvas.width - enemyRadius - i*70,
+        y: (canvas.height / (maxEnemies + 1)) * (i+1),
+        radius: enemyRadius,
+        speedX: 3 * (Math.random() > 0.5 ? 1 : -1),
+        speedY: 3 * (Math.random() > 0.5 ? 1 : -1),
+        hp: 100,
+        alive: true,
+        gunAngle: 0,
+        bulletCooldown: 0
+      };
+      enemies.push(enemy);
+    }
+  }
+
+  // 開始遊戲按鈕事件
+  startBtn.addEventListener('click', () => {
+    startScreen.style.display = 'none';
+    playerHpBoard.style.display = 'block';
+    restartButton.style.display = 'none';
+
+    player.x = player.radius; // 最左邊(保持半徑距離)
+    player.y = canvas.height / 2;
+    player.hp = 100;
+    playerHpBoard.textContent = `玩家血量: ${player.hp}`;
+
+    playerBullets = [];
+    enemyBullets = [];
+
+    spawnEnemies();
+    gameRunning = true;
+    lastShotTime = 0;
+
+    gameLoop();
+  });
+
+  resize();
+
+</script>
+</body>
+</html>
